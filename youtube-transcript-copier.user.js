@@ -2,9 +2,9 @@
 // @name         YouTube Transcript Copier (Button Only...for now!)
 // @match        https://www.youtube.com/watch*
 // @grant        none
-// @version      1.0
+// @version      1.1
 // @author       Amir Tehrani
-// @description  Adds a styled button to copy the YouTube video transcript, with a timestamp toggle
+// @description  Adds a styled button to copy the YouTube video transcript, with a timestamp toggle. Now works on playlist pages.
 // @namespace    https://greasyfork.org/
 // @icon         https://www.google.com/s2/favicons?domain=youtube.com
 // ==/UserScript==
@@ -76,36 +76,58 @@
 
         copyButton.addEventListener('click', handleCopyClick);
 
-        function insertButton() {
-            const potentialTargets = [
-                '#description #top-level-buttons-computed',
-                '#top-row.ytd-watch-metadata',
-                '#above-the-fold',
-                '#meta-contents',
-                '#primary-inner'
-            ];
-
-            for (const targetSelector of potentialTargets) {
-                const targetElement = document.querySelector(targetSelector);
-                if (targetElement) {
-                    targetElement.parentNode.insertBefore(copyButton, targetElement.nextSibling);
-                    injectStyles();
-                    return true;
-                }
-            }
-            return false;
-        }
-
         return insertButton();
     }
 
+    function insertButton() {
+        // Robust list of potential targets to handle different YouTube layouts (e.g., playlist vs. standard).
+        const potentialTargets = [
+            '#owner', // Reliable on both layouts, next to channel info
+            '#above-the-fold #actions-inner', // Reliable on both layouts, inside like/share container
+            '#top-row.ytd-watch-metadata', // Reliable fallback
+            '#meta-contents', // Original target, works on non-playlist pages
+            '#above-the-fold' // Final fallback
+        ];
+
+        for (const targetSelector of potentialTargets) {
+            const targetElement = document.querySelector(targetSelector);
+            // Check if the element exists AND is visible before inserting the button.
+            if (targetElement && targetElement.offsetParent !== null) {
+                targetElement.parentNode.insertBefore(copyButton, targetElement.nextSibling);
+                injectStyles();
+                return true;
+            }
+        }
+        return false;
+    }
+
     function handleCopyClick() {
-        updateButtonText('Copy Transcript');
+        updateButtonText('Copying...');
+
+        const playlistPanel = document.querySelector('ytd-playlist-panel-renderer#playlist');
+
+        // This function will be called to restore the UI to its original state.
+        function cleanup() {
+            if (playlistPanel) {
+                playlistPanel.style.display = ''; // Restore playlist visibility
+            }
+        }
+
+        // On playlist pages, the playlist panel conflicts with the transcript panel.
+        // Temporarily hide it to allow the transcript to load.
+        if (playlistPanel) {
+            playlistPanel.style.display = 'none';
+        }
 
         const moreActionsButton = document.querySelector('button[aria-label="More actions"]');
-        if (moreActionsButton) {
-            moreActionsButton.click();
+        if (!moreActionsButton) {
+            console.error("Could not find 'More actions' button.");
+            updateButtonText("Error");
+            copyButton.style.backgroundColor = "rgba(220, 53, 69, 0.8)";
+            cleanup(); // Ensure cleanup happens on early failure
+            return;
         }
+        moreActionsButton.click();
 
         const buttonIntervalId = setInterval(() => {
             const transcriptButton = document.querySelector('[aria-label="Show transcript"]');
@@ -119,7 +141,7 @@
                     if (transcriptPanel && transcriptPanel.querySelector('ytd-transcript-segment-renderer')) {
                         clearInterval(panelIntervalId);
                         clearTimeout(transcriptPanelTimeout);
-                        copyTranscriptText(transcriptPanel);
+                        copyTranscriptText(transcriptPanel, cleanup); // Pass cleanup to the next function
                     }
                 }, 100);
 
@@ -130,6 +152,7 @@
                         updateButtonText("Transcript Not Found");
                         copyButton.style.backgroundColor = "rgba(220, 53, 69, 0.8)";
                     }
+                    cleanup(); // Cleanup on timeout
                 }, 15000);
             }
         }, 250);
@@ -141,13 +164,15 @@
                 copyButton.style.backgroundColor = "rgba(220, 53, 69, 0.8)";
             }
             console.error("Transcript button not found after timeout.");
+            cleanup(); // Cleanup on timeout
         }, 10000);
     }
 
-    function copyTranscriptText(transcriptPanel) {
+    function copyTranscriptText(transcriptPanel, cleanupCallback) {
         if (!transcriptPanel) {
             console.error("Transcript container not found.");
             updateButtonText("Error");
+            if (cleanupCallback) cleanupCallback();
             return;
         }
 
@@ -170,6 +195,7 @@
         navigator.clipboard.writeText(transcriptText)
             .then(() => {
               updateButtonText("Copied!");
+              if (cleanupCallback) cleanupCallback(); // Cleanup on success
             })
             .catch(err => {
                 console.error('Failed to copy transcript:', err);
@@ -177,6 +203,7 @@
                     updateButtonText("Copy Failed");
                     copyButton.style.backgroundColor = "rgba(220, 53, 69, 0.8)";
                 }
+                if (cleanupCallback) cleanupCallback(); // Cleanup on failure
             });
     }
 
@@ -190,11 +217,12 @@
                          copyButton.style.backgroundColor = 'rgba(0, 123, 255, 0.8)';
 
                          const timestampToggle = document.getElementById('timestamp-toggle');
-                         timestampToggle.textContent = includeTimestamps ? ' (Time)' : ' (No Time)';
-                         timestampToggle.style.color = includeTimestamps ? 'white' : 'rgba(255, 255, 255, 0.7)';
-                         timestampToggle.style.borderColor = includeTimestamps ? 'white' : 'rgba(255, 255, 255, 0.3)';
-                         timestampToggle.style.backgroundColor = includeTimestamps ? 'rgba(0,0,0, 0.4)' : 'rgba(0, 0, 0, 0.1)';
-
+                         if (timestampToggle) {
+                             timestampToggle.textContent = includeTimestamps ? ' (Time)' : ' (No Time)';
+                             timestampToggle.style.color = includeTimestamps ? 'white' : 'rgba(255, 255, 255, 0.7)';
+                             timestampToggle.style.borderColor = includeTimestamps ? 'white' : 'rgba(255, 255, 255, 0.3)';
+                             timestampToggle.style.backgroundColor = includeTimestamps ? 'rgba(0,0,0, 0.4)' : 'rgba(0, 0, 0, 0.1)';
+                         }
                     }, 1500);
             } else if (text.startsWith("Error") || text === "Copy Failed" || text === "Transcript Not Found") {
                  copyButton.style.backgroundColor = "rgba(220, 53, 69, 0.8)";
@@ -246,46 +274,8 @@
                 box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
                 transform: translateY(1px);
             }
-
-            .yt-transcript-button::before {
-                content: '';
-                position: absolute;
-                top: 0;
-                left: 0;
-                width: 100%;
-                height: 100%;
-                background: radial-gradient(circle at 0 0, rgba(255, 255, 255, 0.4) 10%, transparent 10.01%);
-                background-size: 0 0;
-                opacity: 0;
-                pointer-events: none;
-                transition: background-size 0.4s ease, opacity 0.4s ease, background-position 0.4s ease;
-            }
-
-            .yt-transcript-button:active::before {
-                background-size: 200% 200%;
-                opacity: 1;
-                transition: background-size 0.4s ease, opacity 0.4s ease;
-            }
         `;
         document.head.appendChild(style);
-
-        copyButton.addEventListener('mousedown', function(event) {
-            const rect = copyButton.getBoundingClientRect();
-            const x = event.clientX - rect.left;
-            const y = event.clientY - rect.top;
-
-            copyButton.style.setProperty('--ripple-x', x + 'px');
-            copyButton.style.setProperty('--ripple-y', y + 'px');
-            copyButton.style.background = `radial-gradient(circle at var(--ripple-x) var(--ripple-y), rgba(255, 255, 255, 0.4) 10%, transparent 10.01%)`;
-        });
-
-        copyButton.addEventListener('mouseup', function(event){
-            copyButton.style.background = null;
-        });
-
-        copyButton.addEventListener("mouseleave", function(event) {
-            copyButton.style.background = null;
-        });
     }
 
     function attemptButtonCreation() {
@@ -314,8 +304,9 @@
     }
 
     function resetState() {
-        if (document.getElementById('show-transcript-button')) {
-            document.getElementById('show-transcript-button').remove();
+        const button = document.getElementById('show-transcript-button');
+        if (button) {
+            button.remove();
         }
         insertionAttempts = 0;
         if (retryInterval) {
