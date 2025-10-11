@@ -36,12 +36,12 @@ A userscript that adds a button to YouTube video pages for copying the transcrip
 ## Usage
 
 1.  Go to any YouTube video page.
-2.  You should see a "Copy Transcript" button below the video, near the description.
+2.  You should see a "Copy Transcript" button next to the Subscribe button (below the video title, on the same line as the channel name).
 3.  Click the "(No Time)" / "(Time)" portion of the button to toggle timestamps on or off.  The appearance of the toggle changes to reflect the current state.
 4.  Click the main "Copy Transcript" part of the button to copy the transcript.  A brief "Copied!" message will confirm the action.
 
 ## Screenshots
-**1. YouTube Interface - Button (No Time / Time):** Shows the "Copy Transcript" button as it appears on the YouTube video page, located beneath the video title (but above the description/comment section).  The button is a rounded, pill-shaped button with a blue background. The two states of the integrated timestamp toggle are demonstrated: the default "(No Time)" and the toggled "(Time)" state (achieved by clicking the timestamp portion of the button).
+**1. YouTube Interface - Button (No Time / Time):** Shows the "Copy Transcript" button as it appears on the YouTube video page, located beneath the video title, on the same line as the channel name. The button is a rounded, pill-shaped button with a blue background. The two states of the integrated timestamp toggle are demonstrated: the default "(No Time)" and the toggled "(Time)" state (achieved by clicking the timestamp portion of the button).
 
 <img src="screenshots/JustTheButton(NoTime).png" alt="YouTube Interface - Button (No Time)" width="350">
 <img src="screenshots/JustTheButton(Time).png" alt="YouTube Interface - Button (Time)" width="350">
