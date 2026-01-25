@@ -1,10 +1,10 @@
 // ==UserScript==
-// @name         YouTube Transcript Copier (Button Only...for now!)
-// @match        https://www.youtube.com/watch*
+// @name         YouTube Transcript Copier (Optimized SPA Version)
+// @match        https://www.youtube.com/*
 // @grant        none
-// @version      1.1
+// @version      1.2
 // @author       Amir Tehrani
-// @description  Adds a styled button to copy the YouTube video transcript, with a timestamp toggle. Now works on playlist pages.
+// @description  Adds a styled button to copy the YouTube video transcript, with a timestamp toggle. Works on playlist pages and now, also soft-navigation.
 // @namespace    https://greasyfork.org/
 // @icon         https://www.google.com/s2/favicons?domain=youtube.com
 // ==/UserScript==
@@ -12,16 +12,30 @@
 (function() {
     'use strict';
 
-    let observer = null;
-    let currentURL = window.location.href;
-    let insertionAttempts = 0;
-    const maxAttempts = 20;
     let retryInterval = null;
     let includeTimestamps = false; // Default: no timestamps
     let copyButton = null;
     let buttonTextNode = null;
     let transcriptPanelTimeout = null; // Timeout for panel loading
     let transcriptButtonTimeout = null; // Timeout for the "Show transcript" button
+
+    // Handles the Single Page Application (SPA) navigation logic
+    function handleNavigation() {
+        resetState();
+
+        // Check if we are on a video page
+        if (window.location.pathname === '/watch') {
+            if (!createTranscriptButton()) {
+                retryInterval = setInterval(attemptButtonCreation, 500);
+            }
+        }
+    }
+
+    // Listen for YouTube's internal finish event to trigger the script
+    window.addEventListener('yt-navigate-finish', handleNavigation);
+
+    // Initial run for the first page load
+    handleNavigation();
 
     function createTranscriptButton() {
         if (document.getElementById('show-transcript-button')) {
@@ -106,15 +120,15 @@
 
         const playlistPanel = document.querySelector('ytd-playlist-panel-renderer#playlist');
 
-        // This function will be called to restore the UI to its original state.
-        function cleanup() {
+        // Function will be called to restore the UI to its original state
+        function cleanupUI() {
             if (playlistPanel) {
                 playlistPanel.style.display = ''; // Restore playlist visibility
             }
         }
 
-        // On playlist pages, the playlist panel conflicts with the transcript panel.
-        // Temporarily hide it to allow the transcript to load.
+        // On playlist pages, the playlist panel conflicts with the transcript panel
+        // Temporarily hide it to allow the transcript to load
         if (playlistPanel) {
             playlistPanel.style.display = 'none';
         }
@@ -124,7 +138,7 @@
             console.error("Could not find 'More actions' button.");
             updateButtonText("Error");
             copyButton.style.backgroundColor = "rgba(220, 53, 69, 0.8)";
-            cleanup(); // Ensure cleanup happens on early failure
+            cleanupUI();
             return;
         }
         moreActionsButton.click();
@@ -141,7 +155,7 @@
                     if (transcriptPanel && transcriptPanel.querySelector('ytd-transcript-segment-renderer')) {
                         clearInterval(panelIntervalId);
                         clearTimeout(transcriptPanelTimeout);
-                        copyTranscriptText(transcriptPanel, cleanup); // Pass cleanup to the next function
+                        copyTranscriptText(transcriptPanel, cleanupUI); // Pass cleanup to the next function
                     }
                 }, 100);
 
@@ -152,7 +166,7 @@
                         updateButtonText("Transcript Not Found");
                         copyButton.style.backgroundColor = "rgba(220, 53, 69, 0.8)";
                     }
-                    cleanup(); // Cleanup on timeout
+                    cleanupUI();
                 }, 15000);
             }
         }, 250);
@@ -164,7 +178,7 @@
                 copyButton.style.backgroundColor = "rgba(220, 53, 69, 0.8)";
             }
             console.error("Transcript button not found after timeout.");
-            cleanup(); // Cleanup on timeout
+            cleanupUI();
         }, 10000);
     }
 
@@ -195,7 +209,7 @@
         navigator.clipboard.writeText(transcriptText)
             .then(() => {
               updateButtonText("Copied!");
-              if (cleanupCallback) cleanupCallback(); // Cleanup on success
+              if (cleanupCallback) cleanupCallback();
             })
             .catch(err => {
                 console.error('Failed to copy transcript:', err);
@@ -203,7 +217,7 @@
                     updateButtonText("Copy Failed");
                     copyButton.style.backgroundColor = "rgba(220, 53, 69, 0.8)";
                 }
-                if (cleanupCallback) cleanupCallback(); // Cleanup on failure
+                if (cleanupCallback) cleanupCallback();
             });
     }
 
@@ -213,16 +227,8 @@
             if (text === "Copied!") {
                 copyButton.style.backgroundColor = "rgba(40, 167, 69, 0.9)";
                   setTimeout(() => {
-                        buttonTextNode.textContent = 'Copy Transcript';
-                         copyButton.style.backgroundColor = 'rgba(0, 123, 255, 0.8)';
-
-                         const timestampToggle = document.getElementById('timestamp-toggle');
-                         if (timestampToggle) {
-                             timestampToggle.textContent = includeTimestamps ? ' (Time)' : ' (No Time)';
-                             timestampToggle.style.color = includeTimestamps ? 'white' : 'rgba(255, 255, 255, 0.7)';
-                             timestampToggle.style.borderColor = includeTimestamps ? 'white' : 'rgba(255, 255, 255, 0.3)';
-                             timestampToggle.style.backgroundColor = includeTimestamps ? 'rgba(0,0,0, 0.4)' : 'rgba(0, 0, 0, 0.1)';
-                         }
+                        if (buttonTextNode) buttonTextNode.textContent = 'Copy Transcript';
+                        if (copyButton) copyButton.style.backgroundColor = 'rgba(0, 123, 255, 0.8)';
                     }, 1500);
             } else if (text.startsWith("Error") || text === "Copy Failed" || text === "Transcript Not Found") {
                  copyButton.style.backgroundColor = "rgba(220, 53, 69, 0.8)";
@@ -255,7 +261,6 @@
                 font-weight: 500;
                 position: relative;
                 overflow: hidden;
-                will-change: transform, box-shadow, background-color;
             }
 
             .yt-transcript-button:hover {
@@ -268,38 +273,14 @@
                 outline: none;
                 box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.3);
             }
-
-            .yt-transcript-button:active {
-                background-color: rgba(0, 60, 120, 0.9);
-                box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
-                transform: translateY(1px);
-            }
         `;
         document.head.appendChild(style);
     }
 
     function attemptButtonCreation() {
-        insertionAttempts++;
-        if (createTranscriptButton() || insertionAttempts >= maxAttempts) {
+        if (createTranscriptButton()) {
             clearInterval(retryInterval);
             retryInterval = null;
-            if (insertionAttempts >= maxAttempts) {
-                console.error('Could not insert the button after multiple attempts.');
-            }
-        }
-    }
-
-    function setupObserver() {
-        if (observer) observer.disconnect();
-        observer = new MutationObserver(handleMutations);
-        observer.observe(document.body, { childList: true, subtree: true });
-    }
-
-    function handleMutations(mutations) {
-        if (window.location.href !== currentURL) {
-            currentURL = window.location.href;
-            resetState();
-            startProcess();
         }
     }
 
@@ -308,31 +289,14 @@
         if (button) {
             button.remove();
         }
-        insertionAttempts = 0;
         if (retryInterval) {
             clearInterval(retryInterval);
             retryInterval = null;
         }
         clearTimeout(transcriptPanelTimeout);
         clearTimeout(transcriptButtonTimeout);
-        transcriptPanelTimeout = null;
-        transcriptButtonTimeout = null;
-
-        if (observer) {
-          observer.disconnect();
-          observer = null;
-        }
-
         copyButton = null;
         buttonTextNode = null;
     }
 
-    function startProcess() {
-        if (!createTranscriptButton()) {
-            retryInterval = setInterval(attemptButtonCreation, 500);
-        }
-        setupObserver();
-    }
-
-    startProcess();
 })();
