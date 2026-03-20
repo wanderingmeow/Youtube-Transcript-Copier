@@ -46,7 +46,7 @@
         HAS_SEGMENTS: 'transcript-segment-view-model',
 
         /** Structural elements inside the transcript panel. */
-        SECTION: 'ytd-item-section-renderer',
+        SECTION: 'yt-item-section-renderer',
         CHAPTER_TITLE: 'h3.ytwTimelineChapterViewModelTitle',
         SEGMENT: 'transcript-segment-view-model',
         SEGMENT_FALLBACK: 'ytd-transcript-segment-renderer',
