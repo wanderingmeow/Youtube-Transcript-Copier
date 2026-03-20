@@ -152,6 +152,104 @@
     let panelTimeoutId = null;
 
     // =====================================================================
+    //  Button State Manager
+    // =====================================================================
+
+    const buttonState = {
+        resetTimeoutId: null,
+
+        // Private: clear any pending reset
+        _clear() {
+            if (this.resetTimeoutId) {
+                clearTimeout(this.resetTimeoutId);
+                this.resetTimeoutId = null;
+            }
+        },
+
+        // Private: update UI
+        _set(text, bgColor) {
+            if (buttonTextNode) buttonTextNode.textContent = text;
+            if (copyButton) copyButton.style.backgroundColor = bgColor;
+        },
+
+        // Transitions
+        copying() {
+            this._clear();
+            this._set('Copying…', 'rgba(0, 123, 255, 0.8)');
+        },
+
+        loading() {
+            this._clear();
+            this._set('Loading…', 'rgba(0, 123, 255, 0.8)');
+        },
+
+        success() {
+            this._clear();
+            this._set('Copied!', 'rgba(40, 167, 69, 0.9)');
+            this.resetTimeoutId = setTimeout(() => this.idle(), TIMEOUT.SUCCESS_FLASH);
+        },
+
+        error(message) {
+            this._clear();
+            this._set(message, 'rgba(220, 53, 69, 0.8)');
+        },
+
+        idle() {
+            this._clear();
+            this._set('Copy Transcript', 'rgba(0, 123, 255, 0.8)');
+        },
+
+        // For states that should persist until user action (no auto-revert)
+        custom(text, color = 'rgba(0, 123, 255, 0.8)') {
+            this._clear();
+            this._set(text, color);
+        },
+
+        // Cleanup
+        destroy() {
+            this._clear();
+        }
+    };
+
+    // =====================================================================
+    //  Debug Utilities
+    // =====================================================================
+
+    /**
+     * Log DOM structure for debugging selector issues.
+     * @param {HTMLElement} root - Element to inspect
+     * @param {string} context - Label for the log group
+     */
+    function logDOMStructure(root, context) {
+        console.log(`[YT-Transcript-Copier] ${context}:`);
+        if (!root) {
+            console.log('  ROOT IS NULL');
+            return;
+        }
+
+        // Check for potential transcript containers
+        const potentialPanels = [
+            'ytd-macro-markers-list-renderer',
+            'ytd-engagement-panel-section-list-renderer',
+            'ytd-transcript-renderer',
+            'ytd-transcript-body-renderer',
+            'ytd-transcript-segment-list-renderer'
+        ];
+
+        console.log('  Checking potential transcript containers:');
+        potentialPanels.forEach(sel => {
+            const el = root.querySelector(sel) || document.querySelector(sel);
+            if (el) {
+                console.log(`    ✓ ${sel}: found`);
+                console.log(`      - Has segments (transcript-segment-view-model): ${el.querySelector('transcript-segment-view-model') ? 'YES' : 'NO'}`);
+                console.log(`      - Has segments (ytd-transcript-segment-renderer): ${el.querySelector('ytd-transcript-segment-renderer') ? 'YES' : 'NO'}`);
+            } else {
+                console.log(`    ✗ ${sel}: not found`);
+            }
+        });
+    }
+
+    // =====================================================================
     //  Initialization
     // =====================================================================
 
@@ -160,6 +258,7 @@
      * perform an initial run for the current page.
      */
     function init() {
+        console.log('[YT-Transcript-Copier] Script initialized');
         // Listen for YouTube's internal finish event to trigger the script
         window.addEventListener('yt-navigate-finish', onNavigate);
         onNavigate();
@@ -173,13 +272,20 @@
      * @returns {void}
      */
     function onNavigate() {
+        console.log('[YT-Transcript-Copier] Navigation detected, resetting state');
         resetState();
 
         // Check if we are on a video page
         if (window.location.pathname === '/watch') {
+            console.log('[YT-Transcript-Copier] On watch page, attempting to create button');
             if (!createButton()) {
+                console.log('[YT-Transcript-Copier] Button insertion failed, starting retry loop');
                 createRetryId = setInterval(retryCreate, TIMEOUT.BUTTON_CREATE);
+            } else {
+                console.log('[YT-Transcript-Copier] Button created successfully');
             }
+        } else {
+            console.log('[YT-Transcript-Copier] Not on watch page:', window.location.pathname);
         }
     }
 
@@ -190,6 +296,7 @@
      */
     function retryCreate() {
         if (createButton()) {
+            console.log('[YT-Transcript-Copier] Button created on retry');
             clearInterval(createRetryId);
             createRetryId = null;
         }
@@ -241,12 +348,30 @@
      * @returns {HTMLElement | null} The panel element, or `null` if not found / not yet loaded.
      */
     function findPanel() {
+        console.log('[YT-Transcript-Copier] Searching for transcript panel...');
+        console.log('[YT-Transcript-Copier] Trying primary selector:', SEL.PANEL_PRIMARY);
+
         let panel = document.querySelector(SEL.PANEL_PRIMARY);
-        if (panel && panel.querySelector(SEL.HAS_SEGMENTS)) return panel;
+        if (panel) {
+            console.log('[YT-Transcript-Copier] Primary selector matched, checking for segments...');
+            const hasSegs = panel.querySelector(SEL.HAS_SEGMENTS);
+            console.log('[YT-Transcript-Copier] Panel found, has segments?', !!hasSegs);
+            if (hasSegs) {
+                console.log('[YT-Transcript-Copier] Using primary panel');
+                return panel;
+            }
+        }
 
+        console.log('[YT-Transcript-Copier] Trying fallback selector:', SEL.PANEL_FALLBACK);
         panel = document.querySelector(SEL.PANEL_FALLBACK);
-        if (panel && panel.querySelector(SEL.HAS_SEGMENTS)) return panel;
+        if (panel) {
+            const hasSegs = panel.querySelector(SEL.HAS_SEGMENTS);
+            console.log('[YT-Transcript-Copier] Fallback panel found, has segments?', !!hasSegs);
+            if (hasSegs) return panel;
+        }
 
+        console.log('[YT-Transcript-Copier] No panel found with standard selectors');
+        logDOMStructure(document.body, 'Current DOM Structure');
         return null;
     }
 
@@ -262,6 +387,7 @@
      * @returns {HTMLElement} The scrollable container, or `panel` as a fallback.
      */
     function findScrollableContainer(panel) {
+        console.log('[YT-Transcript-Copier] Finding scrollable container...');
         const candidates = [
             'ytd-transcript-segment-list-renderer',
             'ytd-transcript-renderer',
@@ -273,19 +399,27 @@
             if (el) {
                 const cs = getComputedStyle(el);
                 if (cs.overflowY === 'auto' || cs.overflowY === 'scroll') {
+                    console.log('[YT-Transcript-Copier] Found scrollable container:', sel);
                     return /** @type {HTMLElement} */ (el);
+                } else {
+                    console.log('[YT-Transcript-Copier] Candidate found but not scrollable:', sel, 'overflowY:', cs.overflowY);
                 }
+            } else {
+                console.log('[YT-Transcript-Copier] Scroll candidate not found:', sel);
             }
         }
 
         // Walk all descendants looking for any scrollable element.
+        console.log('[YT-Transcript-Copier] Searching all descendants for scrollable element...');
         for (const el of panel.querySelectorAll('*')) {
             const cs = getComputedStyle(/** @type {HTMLElement} */(el));
             if (cs.overflowY === 'auto' || cs.overflowY === 'scroll') {
+                console.log('[YT-Transcript-Copier] Found scrollable descendant:', el.tagName, el.className);
                 return /** @type {HTMLElement} */ (el);
             }
         }
 
+        console.log('[YT-Transcript-Copier] No scrollable container found, using panel as fallback');
         return panel;
     }
 
@@ -297,7 +431,13 @@
      * @returns {number}
      */
     function countSegments(panel) {
-        return panel.querySelectorAll(`${SEL.SEGMENT}, ${SEL.SEGMENT_FALLBACK}`).length;
+        const modern = panel.querySelectorAll(SEL.SEGMENT).length;
+        const legacy = panel.querySelectorAll(SEL.SEGMENT_FALLBACK).length;
+        const total = modern + legacy;
+        if (total > 0) {
+            console.log(`[YT-Transcript-Copier] Segment count - Modern (${SEL.SEGMENT}): ${modern}, Legacy (${SEL.SEGMENT_FALLBACK}): ${legacy}, Total: ${total}`);
+        }
+        return total;
     }
 
     // =====================================================================
@@ -327,34 +467,47 @@
      * @returns {Promise<void>} Resolves when all segments are loaded.
      */
     async function autoScrollPanel(panel) {
+        console.log('[YT-Transcript-Copier] Starting auto-scroll to load all segments');
         const container = findScrollableContainer(panel);
         let previousCount = 0;
         let stableRounds = 0;
+
+        console.log('[YT-Transcript-Copier] Initial segment count:', countSegments(panel));
+        console.log('[YT-Transcript-Copier] Container scrollHeight:', container.scrollHeight);
 
         for (let i = 0; i < TIMEOUT.SCROLL_MAX_ITERATIONS; i++) {
             container.scrollTop = container.scrollHeight;
             await delay(TIMEOUT.SCROLL_LOAD_WAIT);
 
             const currentCount = countSegments(panel);
+            const atBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 2;
 
             if (currentCount > previousCount) {
-                // New segments appeared — keep scrolling.
+                console.log(`[YT-Transcript-Copier] Scroll ${i}: Loaded ${currentCount - previousCount} new segments (total: ${currentCount})`);
                 previousCount = currentCount;
                 stableRounds = 0;
             } else {
                 stableRounds++;
+                console.log(`[YT-Transcript-Copier] Scroll ${i}: No new segments (stable round ${stableRounds}/2)`);
             }
 
             // Two consecutive stable rounds *and* the container is
             // scrolled all the way down → we're done.
-            const atBottom =
-                container.scrollHeight - container.scrollTop - container.clientHeight < 2;
-            if (stableRounds >= 2 && atBottom) break;
+            if (stableRounds >= 2 && atBottom) {
+                console.log('[YT-Transcript-Copier] Auto-scroll complete: reached bottom and stable');
+                break;
+            }
+
+            if (i === TIMEOUT.SCROLL_MAX_ITERATIONS - 1) {
+                console.warn('[YT-Transcript-Copier] Hit max scroll iterations, stopping');
+            }
         }
 
         // Scroll back to top so the panel looks normal.
+        console.log('[YT-Transcript-Copier] Scrolling back to top');
         container.scrollTop = 0;
         await delay(200);
+        console.log('[YT-Transcript-Copier] Final segment count:', countSegments(panel));
     }
 
     // =====================================================================
@@ -371,7 +524,14 @@
      * @returns {string} Formatted transcript text, or `''` if no segments were found.
      */
     function buildText(panel) {
-        return includeTimestamps ? buildTimestamped(panel) : buildPlain(panel);
+        console.log('[YT-Transcript-Copier] Building text, timestamps enabled:', includeTimestamps);
+        const result = includeTimestamps ? buildTimestamped(panel) : buildPlain(panel);
+        console.log('[YT-Transcript-Copier] Built text length:', result.length);
+        if (!result) {
+            console.warn('[YT-Transcript-Copier] Empty text result!');
+            logDOMStructure(panel, 'Panel structure when text build failed');
+        }
+        return result;
     }
 
     /**
@@ -390,10 +550,14 @@
      * @returns {string}
      */
     function buildTimestamped(panel) {
+        console.log('[YT-Transcript-Copier] Building timestamped transcript...');
         const lines = /** @type {string[]} */ ([]);
         let firstChapter = true;
+        let sectionCount = 0;
+        let segmentCount = 0;
 
         for (const section of panel.querySelectorAll(SEL.SECTION)) {
+            sectionCount++;
             const chapter = textOf(section.querySelector(SEL.CHAPTER_TITLE));
 
             if (chapter) {
@@ -403,12 +567,24 @@
             }
 
             for (const seg of section.querySelectorAll(SEL.SEGMENT)) {
+                segmentCount++;
                 const text = textOf(seg.querySelector(SEL.TEXT));
-                if (!text) continue;
+                if (!text) {
+                    console.log('[YT-Transcript-Copier] Empty text in segment:', seg);
+                    continue;
+                }
 
                 const ts = textOf(seg.querySelector(SEL.TIMESTAMP));
                 lines.push(ts ? `[${ts}]  ${text}` : text);
             }
+        }
+
+        console.log(`[YT-Transcript-Copier] Processed ${sectionCount} sections, ${segmentCount} segments`);
+
+        if (lines.length === 0) {
+            console.warn('[YT-Transcript-Copier] No lines built! Checking for segments with fallback selector...');
+            const fallbackSegments = panel.querySelectorAll(SEL.SEGMENT_FALLBACK);
+            console.log(`[YT-Transcript-Copier] Found ${fallbackSegments.length} legacy segments`);
         }
 
         return lines.join('\n');
@@ -425,10 +601,14 @@
      * @returns {string}
      */
     function buildPlain(panel) {
+        console.log('[YT-Transcript-Copier] Building plain transcript...');
         const parts = /** @type {string[]} */ ([]);
         let firstChapter = true;
+        let sectionCount = 0;
+        let segmentCount = 0;
 
         for (const section of panel.querySelectorAll(SEL.SECTION)) {
+            sectionCount++;
             const chapter = textOf(section.querySelector(SEL.CHAPTER_TITLE));
 
             if (chapter) {
@@ -439,12 +619,16 @@
 
             const words = /** @type {string[]} */ ([]);
             for (const seg of section.querySelectorAll(SEL.SEGMENT)) {
+                segmentCount++;
                 const text = textOf(seg.querySelector(SEL.TEXT));
                 if (text) words.push(text);
+                else console.log('[YT-Transcript-Copier] Empty text in segment (plain mode):', seg);
             }
 
-            parts.push(words.join(' '));
+            if (words.length > 0) parts.push(words.join(' '));
         }
+
+        console.log(`[YT-Transcript-Copier] Processed ${sectionCount} sections, ${segmentCount} segments (plain mode)`);
 
         return parts.join('\n');
     }
@@ -463,7 +647,10 @@
      * @returns {boolean}
      */
     function createButton() {
-        if (document.getElementById('show-transcript-button')) return true;
+        if (document.getElementById('show-transcript-button')) {
+            console.log('[YT-Transcript-Copier] Button already exists');
+            return true;
+        }
 
         copyButton = document.createElement('button');
         copyButton.id = 'show-transcript-button';
@@ -565,15 +752,20 @@
      * @returns {boolean} `true` if the button was inserted.
      */
     function insertButton() {
+        console.log('[YT-Transcript-Copier] Attempting button insertion...');
         for (const sel of SEL.BUTTON_TARGETS) {
             const targetElement = firstVisible(document, sel);
             // Check if the element exists AND is visible before inserting the button.
             if (targetElement && targetElement.parentNode) {
+                console.log('[YT-Transcript-Copier] Button inserted after:', sel);
                 targetElement.parentNode.insertBefore(/** @type {Node} */(copyButton), targetElement.nextSibling);
                 injectStyles();
                 return true;
+            } else {
+                console.log('[YT-Transcript-Copier] Target not found or not visible:', sel);
             }
         }
+        console.warn('[YT-Transcript-Copier] No insertion target found!');
         return false;
     }
 
@@ -595,69 +787,88 @@
      * @returns {void}
      */
     function handleCopy() {
-        setButtonState('Copying…');
+        console.log('[YT-Transcript-Copier] === HANDLE COPY STARTED ===');
+        buttonState.copying();
 
         // Temporarily hide the playlist panel so "More actions" targets
         // the video (not the playlist).
         const playlistPanel = /** @type {HTMLElement | null} */
             (document.querySelector('ytd-playlist-panel-renderer#playlist'));
-        if (playlistPanel) playlistPanel.style.display = 'none';
+        if (playlistPanel) {
+            console.log('[YT-Transcript-Copier] Hiding playlist panel temporarily');
+            playlistPanel.style.display = 'none';
+        }
 
         const moreActions = document.querySelector(SEL.MORE_ACTIONS);
         if (!moreActions) {
-            setError('Error');
+            console.error('[YT-Transcript-Copier] "More actions" button not found! Selector:', SEL.MORE_ACTIONS);
+            buttonState.error('Error');
             if (playlistPanel) playlistPanel.style.display = '';
             return;
         }
+        console.log('[YT-Transcript-Copier] Clicking "More actions" button');
         moreActions.click();
 
-        // Poll for the "Show transcript" button in the opened menu.
+        let attempts = 0;
         buttonPollId = setInterval(() => {
+            attempts++;
             const btn = document.querySelector(SEL.SHOW_TRANSCRIPT);
-            if (!btn) return;
+            if (!btn) {
+                if (attempts % 4 === 0) console.log(`[YT-Transcript-Copier] Waiting for transcript button... (${attempts * TIMEOUT.BUTTON_POLL}ms)`);
+                return;
+            }
 
+            console.log('[YT-Transcript-Copier] Found "Show transcript" button, clicking it');
             clearInterval(buttonPollId);
             clearTimeout(buttonTimeoutId);
             btn.click();
 
-            // Now poll for the panel to fully render.
+            let panelAttempts = 0;
             panelPollId = setInterval(async () => {
+                panelAttempts++;
                 const panel = findPanel();
-                if (!panel) return;
+                if (!panel) {
+                    if (panelAttempts % 2 === 0) console.log(`[YT-Transcript-Copier] Waiting for panel to load... (${panelAttempts * TIMEOUT.PANEL_POLL}ms)`);
+                    return;
+                }
 
+                console.log('[YT-Transcript-Copier] Panel found, proceeding to extract');
                 clearInterval(panelPollId);
                 clearTimeout(panelTimeoutId);
 
                 try {
-                    // Give the panel a moment to initialise its scroll
-                    // container, then auto-scroll to load every segment.
                     await delay(500);
-                    setButtonState('Loading…');
+                    buttonState.loading();
                     await autoScrollPanel(panel);
 
                     const text = buildText(panel);
                     if (text) {
+                        console.log('[YT-Transcript-Copier] Text built successfully, copying to clipboard');
                         tryCopy(text);
                     } else {
-                        setError('No Text Found');
+                        console.error('[YT-Transcript-Copier] No text found after scrolling!');
+                        buttonState.error('No Text Found');
                     }
-                } catch {
-                    setError('Scroll Error');
+                } catch (err) {
+                    console.error('[YT-Transcript-Copier] Error during extraction:', err);
+                    buttonState.error('Scroll Error');
                 } finally {
                     if (playlistPanel) playlistPanel.style.display = '';
                 }
             }, TIMEOUT.PANEL_POLL);
 
             panelTimeoutId = setTimeout(() => {
+                console.error('[YT-Transcript-Copier] Timeout: Panel did not load within', TIMEOUT.PANEL_LOADED, 'ms');
                 clearInterval(panelPollId);
-                setError('Transcript Not Found');
+                buttonState.error('Transcript Not Found');
                 if (playlistPanel) playlistPanel.style.display = '';
             }, TIMEOUT.PANEL_LOADED);
         }, TIMEOUT.BUTTON_POLL);
 
         buttonTimeoutId = setTimeout(() => {
+            console.error('[YT-Transcript-Copier] Timeout: "Show transcript" button not found within', TIMEOUT.BUTTON_FOUND, 'ms');
             clearInterval(buttonPollId);
-            setError('Transcript Not Found');
+            buttonState.error('Transcript Not Found');
             if (playlistPanel) playlistPanel.style.display = '';
         }, TIMEOUT.BUTTON_FOUND);
     }
@@ -675,28 +886,31 @@
      * @returns {void}
      */
     function tryCopy(text) {
-        // 1. Greasemonkey / Tampermonkey API.
+        console.log('[YT-Transcript-Copier] Attempting clipboard copy...');
         if (typeof GM !== 'undefined' && typeof GM.setClipboard === 'function') {
             try {
                 GM.setClipboard(text, 'text');
-                setSuccess();
+                console.log('[YT-Transcript-Copier] Copied via GM.setClipboard');
+                buttonState.success();
                 return;
-            } catch {
-                // Fall through to next method.
+            } catch (err) {
+                console.warn('[YT-Transcript-Copier] GM.setClipboard failed:', err);
             }
         }
 
-        // 2. Modern async Clipboard API.
         if (navigator.clipboard && window.isSecureContext) {
             navigator.clipboard.writeText(text)
-                .then(setSuccess)
-                .catch(() => {
+                .then(() => {
+                    console.log('[YT-Transcript-Copier] Copied via navigator.clipboard');
+                    buttonState.success();
+                })
+                .catch((err) => {
+                    console.warn('[YT-Transcript-Copier] navigator.clipboard failed:', err);
                     if (!fallbackCopy(text)) showModal(text);
                 });
             return;
         }
 
-        // 3. Legacy execCommand → 4. Modal fallback.
         if (!fallbackCopy(text)) {
             showModal(text);
         }
@@ -725,7 +939,12 @@
         const ok = document.execCommand('copy');
         ta.remove();
 
-        if (ok) setSuccess();
+        if (ok) {
+            console.log('[YT-Transcript-Copier] Copied via execCommand');
+            buttonState.success();
+        } else {
+            console.warn('[YT-Transcript-Copier] execCommand copy failed');
+        }
         return ok;
     }
 
@@ -737,6 +956,7 @@
      * @returns {void}
      */
     function showModal(text) {
+        console.log('[YT-Transcript-Copier] Showing manual copy modal');
         document.getElementById('yt-transcript-modal-overlay')?.remove();
 
         const overlay = document.createElement('div');
@@ -828,7 +1048,7 @@
 
         setTimeout(() => { textarea.focus(); textarea.select(); }, TIMEOUT.MODAL_SELECT);
 
-        setButtonState('Copy Manually');
+        buttonState.custom('Copy Manually');
     }
 
     /**
@@ -849,54 +1069,6 @@
         btn.onmouseover = () => { btn.style.background = hoverBg; };
         btn.onmouseout = () => { btn.style.background = initial; };
         return btn;
-    }
-
-    // =====================================================================
-    //  Button state helpers
-    // =====================================================================
-
-    /**
-     * Update the button label.
-     *
-     * - `"Copied!"` — flash green, then revert to "Copy Transcript"
-     *   after {@link TIMEOUT.SUCCESS_FLASH}.
-     * - Any other text — set label, revert to "Copy Transcript" after
-     *   the same delay (unless an error state is active).
-     *
-     * @param {string} text
-     * @returns {void}
-     */
-    function setButtonState(text) {
-        if (!buttonTextNode || !copyButton) return;
-        buttonTextNode.textContent = text;
-        if (text === "Copied!") {
-            copyButton.style.backgroundColor = "rgba(40, 167, 69, 0.9)";
-        }
-        setTimeout(() => {
-            if (buttonTextNode) buttonTextNode.textContent = 'Copy Transcript';
-            if (copyButton) copyButton.style.backgroundColor = 'rgba(0, 123, 255, 0.8)';
-        }, TIMEOUT.SUCCESS_FLASH);
-    }
-
-    /**
-     * Set the button to a persistent error state (red) with the given label.
-     *
-     * @param {string} label - Error message shown on the button.
-     * @returns {void}
-     */
-    function setError(label) {
-        if (!buttonTextNode || !copyButton) return;
-        buttonTextNode.textContent = label;
-        copyButton.style.backgroundColor = 'rgba(220, 53, 69, 0.8)';
-    }
-
-    /**
-     * Convenience: flash "Copied!" in green.
-     *
-     * @returns {void}
-     */
-    function setSuccess() {
-        setButtonState('Copied!');
     }
 
     // =====================================================================
@@ -967,6 +1139,7 @@
         clearTimeout(buttonTimeoutId);
         clearInterval(panelPollId);
         clearTimeout(panelTimeoutId);
+        buttonState.destroy();
         createRetryId = null;
         buttonPollId = null;
         buttonTimeoutId = null;
