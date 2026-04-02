@@ -3,7 +3,7 @@
 // @match        https://www.youtube.com/*
 // @license      MIT
 // @grant        GM.setClipboard
-// @version      1.3
+// @version      1.4
 // @author       WanderingMeow, Amir Tehrani
 // @description  (Updated for new YouTube UI) Adds a styled button to copy the YouTube video transcript, with a timestamp toggle. Works on playlist pages and now, also soft-navigation.
 // @namespace    https://greasyfork.org/
@@ -40,18 +40,20 @@
      */
     const SEL = {
         /** Transcript panel candidates (first match wins). */
-        PANEL_PRIMARY: 'ytd-macro-markers-list-renderer > #content, ytd-macro-markers-list-renderer',
-        PANEL_FALLBACK: 'ytd-engagement-panel-section-list-renderer #content',
+        PANEL_PRIMARY: 'ytd-engagement-panel-section-list-renderer[target-id="engagement-panel-searchable-transcript"]',
+        PANEL_FALLBACK: 'ytd-transcript-renderer, ytd-transcript-segment-list-renderer',
         /** Any transcript segment that confirms the panel is loaded. */
-        HAS_SEGMENTS: 'transcript-segment-view-model',
+        HAS_SEGMENTS: 'ytd-transcript-segment-renderer',
 
         /** Structural elements inside the transcript panel. */
-        SECTION: 'yt-item-section-renderer',
-        CHAPTER_TITLE: 'h3.ytwTimelineChapterViewModelTitle',
-        SEGMENT: 'transcript-segment-view-model',
-        SEGMENT_FALLBACK: 'ytd-transcript-segment-renderer',
-        TIMESTAMP: '.ytwTranscriptSegmentViewModelTimestamp',
-        TEXT: 'span.yt-core-attributed-string',
+        SECTION: 'ytd-transcript-segment-list-renderer',
+        SECTION_HEADER: 'ytd-transcript-section-header-renderer',
+        SEGMENTS_CONTAINER: '#segments-container',
+        CHAPTER_TITLE: '.yt-shelf-header-layout__title span',
+        SEGMENT: 'ytd-transcript-segment-renderer',
+        SEGMENT_FALLBACK: 'transcript-segment-view-model',
+        TIMESTAMP: '.segment-timestamp',
+        TEXT: 'yt-formatted-string.segment-text',
 
         /** YouTube chrome buttons. */
         MORE_ACTIONS: 'button[aria-label="More actions"]',
@@ -229,11 +231,12 @@
 
         // Check for potential transcript containers
         const potentialPanels = [
-            'ytd-macro-markers-list-renderer',
             'ytd-engagement-panel-section-list-renderer',
             'ytd-transcript-renderer',
+            'ytd-transcript-segment-list-renderer',
+            'ytd-transcript-section-header-renderer',
             'ytd-transcript-body-renderer',
-            'ytd-transcript-segment-list-renderer'
+            'ytd-macro-markers-list-renderer',
         ];
 
         console.log('  Checking potential transcript containers:');
@@ -241,8 +244,8 @@
             const el = root.querySelector(sel) || document.querySelector(sel);
             if (el) {
                 console.log(`    ✓ ${sel}: found`);
-                console.log(`      - Has segments (transcript-segment-view-model): ${el.querySelector('transcript-segment-view-model') ? 'YES' : 'NO'}`);
                 console.log(`      - Has segments (ytd-transcript-segment-renderer): ${el.querySelector('ytd-transcript-segment-renderer') ? 'YES' : 'NO'}`);
+                console.log(`      - Has segments (transcript-segment-view-model): ${el.querySelector('transcript-segment-view-model') ? 'YES' : 'NO'}`);
             } else {
                 console.log(`    ✗ ${sel}: not found`);
             }
@@ -339,11 +342,12 @@
     /**
      * Locate the transcript container once the panel has opened.
      *
-     * The primary selector matches the modern YouTube transcript renderer
-     * (`ytd-macro-markers-list-renderer`).  The fallback catches older
-     * markup under `ytd-engagement-panel-section-list-renderer`.
+     * The primary selector matches the engagement panel with
+     * `target-id="engagement-panel-searchable-transcript"`.
+     * The fallback looks for `ytd-transcript-renderer` or
+     * `ytd-transcript-segment-list-renderer` directly.
      * Both are validated by checking for at least one
-     * `transcript-segment-view-model` descendant.
+     * `ytd-transcript-segment-renderer` descendant.
      *
      * @returns {HTMLElement | null} The panel element, or `null` if not found / not yet loaded.
      */
@@ -358,6 +362,13 @@
             console.log('[YT-Transcript-Copier] Panel found, has segments?', !!hasSegs);
             if (hasSegs) {
                 console.log('[YT-Transcript-Copier] Using primary panel');
+                return panel;
+            }
+            // Panel exists but segments not yet rendered — return it
+            // so the caller can wait and retry extraction.
+            const hasTranscript = panel.querySelector('ytd-transcript-renderer');
+            if (hasTranscript) {
+                console.log('[YT-Transcript-Copier] Panel has transcript renderer, returning early');
                 return panel;
             }
         }
@@ -519,7 +530,6 @@
      *
      * Delegates to {@link buildTimestamped} or {@link buildPlain}
      * depending on the current `includeTimestamps` state.
-     *
      * @param {HTMLElement} panel - The transcript panel returned by {@link findPanel}.
      * @returns {string} Formatted transcript text, or `''` if no segments were found.
      */
@@ -537,13 +547,16 @@
     /**
      * Build a transcript string **with** `[mm:ss]` timestamps.
      *
-     * Structure inside each `ytd-item-section-renderer`:
+     * New YouTube layout: section headers and segments are flat siblings
+     * inside `#segments-container`:
      * ```
-     * #header  →  h3.ytwTimelineChapterViewModelTitle   (optional chapter label)
-     * #contents
-     *     └── transcript-segment-view-model
-     *           ├── .ytwTranscriptSegmentViewModelTimestamp
-     *           └── span.yt-core-attributed-string
+     * #segments-container
+     *     ├── ytd-transcript-section-header-renderer  (optional chapter)
+     *     ├── ytd-transcript-segment-renderer
+     *     │       ├── .segment-timestamp
+     *     │       └── yt-formatted-string.segment-text
+     *     ├── ytd-transcript-segment-renderer
+     *     └── ...
      * ```
      *
      * @param {HTMLElement} panel
@@ -552,34 +565,33 @@
     function buildTimestamped(panel) {
         console.log('[YT-Transcript-Copier] Building timestamped transcript...');
         const lines = /** @type {string[]} */ ([]);
-        let firstChapter = true;
-        let sectionCount = 0;
         let segmentCount = 0;
 
-        for (const section of panel.querySelectorAll(SEL.SECTION)) {
-            sectionCount++;
-            const chapter = textOf(section.querySelector(SEL.CHAPTER_TITLE));
+        // Find the flat list of section headers + segments.
+        const container = panel.querySelector(SEL.SEGMENTS_CONTAINER)
+            || panel.querySelector(SEL.SECTION)
+            || panel;
 
-            if (chapter) {
-                if (!firstChapter) lines.push('');
-                lines.push(`## ${chapter}`, '');
-                firstChapter = false;
-            }
-
-            for (const seg of section.querySelectorAll(SEL.SEGMENT)) {
+        for (const el of container.children) {
+            if (el.matches && el.matches(SEL.SECTION_HEADER)) {
+                const chapter = textOf(el.querySelector(SEL.CHAPTER_TITLE));
+                if (chapter) {
+                    if (lines.length > 0) lines.push('');
+                    lines.push(`## ${chapter}`, '');
+                }
+            } else if (el.matches && el.matches(SEL.SEGMENT)) {
                 segmentCount++;
-                const text = textOf(seg.querySelector(SEL.TEXT));
+                const text = textOf(el.querySelector(SEL.TEXT));
                 if (!text) {
-                    console.log('[YT-Transcript-Copier] Empty text in segment:', seg);
+                    console.log('[YT-Transcript-Copier] Empty text in segment:', el);
                     continue;
                 }
-
-                const ts = textOf(seg.querySelector(SEL.TIMESTAMP));
+                const ts = textOf(el.querySelector(SEL.TIMESTAMP));
                 lines.push(ts ? `[${ts}]  ${text}` : text);
             }
         }
 
-        console.log(`[YT-Transcript-Copier] Processed ${sectionCount} sections, ${segmentCount} segments`);
+        console.log(`[YT-Transcript-Copier] Processed ${segmentCount} segments`);
 
         if (lines.length === 0) {
             console.warn('[YT-Transcript-Copier] No lines built! Checking for segments with fallback selector...');
@@ -595,7 +607,8 @@
      *
      * Segments within each chapter are joined with spaces into a
      * continuous paragraph, preserving chapter headings as Markdown
-     * `##` headers.
+     * `##` headers.  Uses the same flat-sibling iteration as
+     * {@link buildTimestamped}.
      *
      * @param {HTMLElement} panel
      * @returns {string}
@@ -603,32 +616,37 @@
     function buildPlain(panel) {
         console.log('[YT-Transcript-Copier] Building plain transcript...');
         const parts = /** @type {string[]} */ ([]);
-        let firstChapter = true;
-        let sectionCount = 0;
+        let currentWords = /** @type {string[]} */ ([]);
         let segmentCount = 0;
 
-        for (const section of panel.querySelectorAll(SEL.SECTION)) {
-            sectionCount++;
-            const chapter = textOf(section.querySelector(SEL.CHAPTER_TITLE));
+        const container = panel.querySelector(SEL.SEGMENTS_CONTAINER)
+            || panel.querySelector(SEL.SECTION)
+            || panel;
 
-            if (chapter) {
-                if (!firstChapter) parts.push('', '');
-                parts.push(`## ${chapter}`, '');
-                firstChapter = false;
-            }
-
-            const words = /** @type {string[]} */ ([]);
-            for (const seg of section.querySelectorAll(SEL.SEGMENT)) {
+        for (const el of container.children) {
+            if (el.matches && el.matches(SEL.SECTION_HEADER)) {
+                // Flush accumulated words before starting a new chapter.
+                if (currentWords.length > 0) {
+                    parts.push(currentWords.join(' '));
+                    currentWords = [];
+                }
+                const chapter = textOf(el.querySelector(SEL.CHAPTER_TITLE));
+                if (chapter) {
+                    if (parts.length > 0) parts.push('', '');
+                    parts.push(`## ${chapter}`, '');
+                }
+            } else if (el.matches && el.matches(SEL.SEGMENT)) {
                 segmentCount++;
-                const text = textOf(seg.querySelector(SEL.TEXT));
-                if (text) words.push(text);
-                else console.log('[YT-Transcript-Copier] Empty text in segment (plain mode):', seg);
+                const text = textOf(el.querySelector(SEL.TEXT));
+                if (text) currentWords.push(text);
+                else console.log('[YT-Transcript-Copier] Empty text in segment (plain mode):', el);
             }
-
-            if (words.length > 0) parts.push(words.join(' '));
         }
 
-        console.log(`[YT-Transcript-Copier] Processed ${sectionCount} sections, ${segmentCount} segments (plain mode)`);
+        // Flush any remaining words.
+        if (currentWords.length > 0) parts.push(currentWords.join(' '));
+
+        console.log(`[YT-Transcript-Copier] Processed ${segmentCount} segments (plain mode)`);
 
         return parts.join('\n');
     }
